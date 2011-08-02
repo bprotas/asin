@@ -70,7 +70,7 @@ module ASIN
         item.asin.should eql(ANY_ASIN)
         item.title.should =~ /Learn Objective/
         item.amount.should eql(3999)
-        item.details_url.should eql('http://www.amazon.com/Learn-Objective-C-Mac-Mark-Dalrymple/dp/1430218150%3FSubscriptionId%3DAKIAJFA5X7RTOKFNPVZQ%26tag%3Dws%26linkCode%3Dxm2%26camp%3D2025%26creative%3D165953%26creativeASIN%3D1430218150')
+        item.details_url.should =~/http:\/\/www.amazon.com\/Learn-Objective-C-Mac-Mark-Dalrymple\/dp\/1430218150.+creative%3D165953%26creativeASIN%3D1430218150/
         item.image_url.should eql('http://ecx.images-amazon.com/images/I/41kq5bDvnUL.jpg')
         item.review.should =~ /Learn Objective-C on the Macintosh/
       end
