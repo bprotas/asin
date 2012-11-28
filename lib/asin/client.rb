@@ -19,10 +19,11 @@ require 'base64'
 # In order to use the Amazon API properly, you need to be a registered user (http://aws.amazon.com).
 #
 # The registration process will give you a +secret-key+ and an +access-key+ (AWSAccessKeyId).
+# Since the latest updates to the service you will need an +associate-tag+.
 #
 # Both are needed to use ASIN (see Configuration for more details):
 #
-#   configure :secret => 'your-secret', :key => 'your-key'
+#   configure :secret => 'your-secret', :key => 'your-key', :associate_tag => 'your-associate_tag'
 #
 # == Search
 #
@@ -116,9 +117,9 @@ module ASIN
 
     # Configures the basic request parameters for ASIN.
     #
-    # Expects at least +secret+ and +key+ for the API call:
+    # Expects at least +secret+, +key+ and +associate_tag+ for the API call:
     #
-    #   configure :secret => 'your-secret', :key => 'your-key'
+    #   configure :secret => 'your-secret', :key => 'your-key', :associate_tag => 'your-associate_tag'
     #
     # See ASIN::Configuration for more infos.
     #
@@ -144,6 +145,10 @@ module ASIN
     # Additional parameters for the API call like this:
     #
     #   lookup(asin, :ResponseGroup => :Medium)
+    #
+    # Or with multiple parameters:
+    #
+    #   lookup(asin, :ResponseGroup => [:Small, :AlternateVersions])
     #
     def lookup(*asins)
       params = asins.last.is_a?(Hash) ? asins.pop : {:ResponseGroup => :Medium}
@@ -175,7 +180,7 @@ module ASIN
 
     # Performs an +ItemSearch+ REST call against the Amazon API.
     #
-    # Expects a Hash of search params where and returns a list of +SimpleItem+s:
+    # Expects a Hash of search params and returns a list of +SimpleItem+s:
     #
     #   items = search :SearchIndex => :Music
     #
@@ -194,7 +199,7 @@ module ASIN
 
     # Performs an +BrowseNodeLookup+ REST call against the Amazon API.
     #
-    # Expects a Hash of search params where and returns a +SimpleNode+:
+    # Expects a node-id and returns a +SimpleNode+:
     #
     #   node = browse_node '163357'
     #
@@ -209,6 +214,26 @@ module ASIN
     def browse_node(node_id, params={:ResponseGroup => :BrowseNodeInfo})
       response = call(params.merge(:Operation => :BrowseNodeLookup, :BrowseNodeId => node_id))
       handle_type(response['BrowseNodeLookupResponse']['BrowseNodes']['BrowseNode'], Configuration.node_type)
+    end
+
+    # Performs an +SimilarityLookup+ REST call against the Amazon API.
+    #
+    # Expects one ore more asins and returns a list of +SimpleNode+s:
+    #
+    #   items = similar '1430218150'
+    #
+    # ==== Options:
+    #
+    # Additional parameters for the API call like this:
+    #
+    #   similar('1430218150', :SimilarityType => :Intersection, :ResponseGroup => :Small)
+    #
+    # Have a look at the optional config values on the Amazon-Documentation[http://docs.amazonwebservices.com/AWSECommerceService/latest/DG/SimilarityLookup.html]
+    #
+    def similar(*asins)
+      params = asins.last.is_a?(Hash) ? asins.pop : {:SimilarityType => :Random, :ResponseGroup => :Medium}
+      response = call(params.merge(:Operation => :SimilarityLookup, :ItemId => asins.join(',')))
+      arrayfy(response['SimilarityLookupResponse']['Items']['Item']).map {|item| handle_item(item)}
     end
 
     # Performs an +CartCreate+ REST call against the Amazon API.
@@ -285,8 +310,8 @@ module ASIN
       cart(:CartClear, {:CartId => cart.cart_id, :HMAC => cart.hmac})
     end
 
-    private()
-    
+    private
+
     def arrayfy(item)
       return [] unless item
       item.is_a?(Array) ? item : [item]
@@ -302,9 +327,6 @@ module ASIN
       elsif type == :mash
         require 'hashie'
         Hashie::Mash.new(data)
-      elsif type == :rash
-        require 'rash'
-        Hashie::Rash.new(data)
       else
         data
       end
@@ -335,7 +357,7 @@ module ASIN
     end
 
     def call(params)
-      Configuration.validate_credentials!
+      Configuration.validate!
 
       params[:ResponseGroup] = params[:ResponseGroup].collect{|g| g.to_s.strip}.join(',') if !params[:ResponseGroup].nil? && params[:ResponseGroup].is_a?(Array)
 
@@ -362,15 +384,15 @@ module ASIN
       # nice tutorial http://cloudcarpenters.com/blog/amazon_products_api_request_signing/
       params[:Service] = :AWSECommerceService
       params[:AWSAccessKeyId] = Configuration.key
+      params[:AssociateTag] = Configuration.associate_tag
 
       params[:Version] = Configuration.version unless Configuration.blank? :version
-      params[:AssociateTag] = Configuration.associate_tag unless Configuration.blank? :associate_tag
 
       # utc timestamp needed for signing
       params[:Timestamp] = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-      # signing needs to order the query alphabetically
-      query = params.map{|key, value| "#{key}=#{CGI.escape(value.to_s)}" }.sort.join('&').gsub('+','%20')
+
+      query = create_query(params)
 
       # yeah, you really need to sign the get-request not the query
       request_to_sign = "GET\n#{Configuration.host}\n#{PATH}\n#{query}"
@@ -379,6 +401,13 @@ module ASIN
       # don't forget to remove the newline from base64
       signature = CGI.escape(Base64.encode64(hmac).chomp)
       "#{query}&Signature=#{signature}"
+    end
+
+    def create_query(params)
+      params.map do |key, value|
+        value = value.collect{|v| v.to_s.strip}.join(',') if value.is_a?(Array)
+        "#{key}=#{CGI.escape(value.to_s)}"
+      end.sort.join('&').gsub('+','%20') # signing needs to order the query alphabetically
     end
 
     def log(severity, message)
